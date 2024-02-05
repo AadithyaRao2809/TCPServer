@@ -1,4 +1,4 @@
-# Multithreaded TCP Server 
+# Multithreaded TCP Server
 
 HP Assignement: PThreads
 
@@ -162,7 +162,7 @@ ENABLE_LOGGING=1 make test_parallel
     kill -9 <PID>
     ```
 2. `nc: HTTP/1.1 400 Bad Request Connection: close.` This may happen if the server is not running or netcat is pointed at the wrong port.
-    
+
         Solution: Start the server and make sure the port is correct.
         ```bash
         ./bin/serial_server 8080

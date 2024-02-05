@@ -1,0 +1,5 @@
+del(fail) NULL
+read(fail) NULL
+write FIN
+read(succ) 1234
+

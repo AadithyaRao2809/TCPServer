@@ -1,0 +1,1 @@
+g++ -std=c++11 -o bin/serial_server src/serial/main.cpp 

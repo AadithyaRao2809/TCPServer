@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # Check if ENABLE_LOGGING is set
 if [ -z "$ENABLE_LOGGING" ]
@@ -48,11 +48,11 @@ for ((i=1;i<=NUM_CLIENTS;i++))
 do
     if [ $PARALLEL -eq 0 ]
     then
-        ncat localhost $PORT < tests/inputs_generated/$i.txt &> tests/outputs/$i.txt
+        nc localhost $PORT < tests/inputs_generated/$i.txt &> tests/outputs/$i.txt
     fi
     if [ $PARALLEL -eq 1 ]
     then
-        ncat localhost $PORT < tests/inputs_generated/$i.txt &> tests/outputs/$i.txt &
+        nc localhost $PORT < tests/inputs_generated/$i.txt &> tests/outputs/$i.txt &
     fi
 done
 
@@ -66,7 +66,7 @@ do
     NUMFILES=$(ls -l tests/outputs/*.txt | wc -l)
     OPENED=$(lsof -t tests/outputs/*.txt | wc -l)
     #sleep 0.010
-done 
+done
 
 declare -i ERR_COUNT=0
 
