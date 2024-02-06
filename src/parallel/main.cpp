@@ -28,6 +28,45 @@
 #define DEBUG 1
 using namespace std;
 
+class Semaphore {
+  pthread_mutex_t kv_store_mutex;
+  int read_count;
+  pthread_mutex_t read_count_mutex;
+public:
+  Semaphore() {
+    pthread_mutex_init(&kv_store_mutex, NULL);
+    pthread_mutex_init(&read_count_mutex, NULL);
+    read_count = 0;
+  }
+  void read_lock() {
+    pthread_mutex_lock(&read_count_mutex);
+    read_count++;
+    if (read_count == 1)
+      pthread_mutex_lock(&kv_store_mutex);
+    pthread_mutex_unlock(&read_count_mutex);
+  }
+
+  void read_unlock() {
+    pthread_mutex_lock(&read_count_mutex);
+    read_count--;
+    if (read_count == 0)
+      pthread_mutex_unlock(&kv_store_mutex);
+    pthread_mutex_unlock(&read_count_mutex);
+  }
+
+  void write_lock() {
+    pthread_mutex_lock(&kv_store_mutex);
+  }
+
+  void write_unlock() {
+    pthread_mutex_unlock(&kv_store_mutex);
+  }
+
+};
+
+unordered_map<string, string> kv_store;
+Semaphore sem;
+
 void error(const char* msg)
 {
   perror(msg);
@@ -41,7 +80,6 @@ void* connect_client(void* client_fd_void)
 
   char buffer[256];
   bzero(buffer, 256);
-  unordered_map<string, string> kv_store;
   bool end;
   stringstream msg;
   int count = 0;
@@ -75,8 +113,14 @@ void* connect_client(void* client_fd_void)
 #endif
 
     string key,val;
+
+
+
     if(command == "READ") {
       msg >> key;
+
+      sem.read_lock();
+
       if(kv_store.find(key) != kv_store.end())
       {
 #if DEBUG == 1
@@ -91,20 +135,30 @@ void* connect_client(void* client_fd_void)
 #endif
         write(client_fd, "NULL\n", 5);
       }
+      sem.read_unlock();
     }
     else if(command == "WRITE") {
       msg >> key;
       msg >> val;
       val = val.substr(1, val.size()-1);
+
+      sem.write_lock();
+
       kv_store[key] = val;
 #if DEBUG == 1
       cout << key << " -> " << val << endl;
 #endif
       write(client_fd, "FIN\n", 4);
+
+      sem.write_unlock();
+
     }
     else if(command == "DELETE")
     {
       msg >> key;
+
+      sem.write_lock();
+
       if(kv_store.find(key) != kv_store.end())
       {
         kv_store.erase(key);
@@ -115,14 +169,21 @@ void* connect_client(void* client_fd_void)
         cout << "NOT FOUND" << endl;
 #endif
       write(client_fd, "NULL\n", 5);
+
+      sem.write_unlock();
+
     }
     else if (command == "COUNT")
     {
+
+      sem.read_lock();
+
       string count = to_string(kv_store.size())+"\n";
       write(client_fd,count.c_str(), sizeof(count));
 #if DEBUG == 1
       cout << kv_store.size() << endl;
 #endif
+      sem.read_unlock();
     }
     else if(command == "END")
     {
