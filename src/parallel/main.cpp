@@ -28,6 +28,8 @@
 #define DEBUG 1
 using namespace std;
 
+
+
 class Semaphore {
   pthread_mutex_t kv_store_mutex;
   int read_count;
@@ -64,8 +66,22 @@ public:
 
 };
 
-unordered_map<string, string> kv_store;
-Semaphore sem;
+
+struct thread_args {
+  int client_fd;
+  unordered_map<string, string> *kv_store;
+  Semaphore *sem;
+
+  thread_args(int cl, unordered_map<string, string> *kv, Semaphore *s)
+  {
+    client_fd = cl;
+    kv_store = kv;
+    sem = s;
+  }
+
+
+};
+
 
 void error(const char* msg)
 {
@@ -74,9 +90,11 @@ void error(const char* msg)
 }
 
 
-void* connect_client(void* client_fd_void)
-{
-  int client_fd = *(int*)client_fd_void;
+void* connect_client(void* client_fd_void) {
+  thread_args *args = (thread_args*)client_fd_void;
+  int client_fd = args->client_fd;
+  unordered_map<string, string> kv_store = *(args->kv_store);
+  Semaphore sem = *(args->sem);
 
   char buffer[256];
   bzero(buffer, 256);
@@ -211,6 +229,9 @@ void* connect_client(void* client_fd_void)
 int main(int argc, char ** argv) {
   int portno; /* port to listen on */
 
+  unordered_map<string, string> kv_store;
+  Semaphore sem;
+
   /*
    * check command line arguments
    */
@@ -256,7 +277,9 @@ int main(int argc, char ** argv) {
 
     pthread_t client_tid;
 
-    int pthread_err = pthread_create(&client_tid, NULL, connect_client, new int(client_fd));
+    thread_args *args = new thread_args(client_fd , &kv_store, &sem);
+
+    int pthread_err = pthread_create(&client_tid, NULL, connect_client, (void*)args);
       if (pthread_err)
       error("ERROR on pthread_create");
     client_threads.push_back(client_tid);
