@@ -35,11 +35,20 @@ class Semaphore {
   int read_count;
   pthread_mutex_t read_count_mutex;
 public:
+
   Semaphore() {
     pthread_mutex_init(&kv_store_mutex, NULL);
     pthread_mutex_init(&read_count_mutex, NULL);
     read_count = 0;
   }
+
+  ~Semaphore() {
+    pthread_mutex_destroy(&kv_store_mutex);
+    pthread_mutex_destroy(&read_count_mutex);
+  }
+
+
+
   void read_lock() {
     pthread_mutex_lock(&read_count_mutex);
     read_count++;
@@ -66,7 +75,6 @@ public:
 
 };
 
-
 struct thread_args {
   int client_fd;
   unordered_map<string, string> *kv_store;
@@ -82,19 +90,16 @@ struct thread_args {
 
 };
 
-
-void error(const char* msg)
-{
+void error(const char* msg) {
   perror(msg);
   exit(1);
 }
 
-
-void* connect_client(void* client_fd_void) {
-  thread_args *args = (thread_args*)client_fd_void;
-  int client_fd = args->client_fd;
-  unordered_map<string, string> kv_store = *(args->kv_store);
-  Semaphore sem = *(args->sem);
+void* connect_client(void* args_void) {
+  thread_args *args = (thread_args*)args_void;
+  // int client_fd = args->client_fd;
+  // unordered_map<string, string> kv_store = *(args->kv_store);
+  // Semaphore (*(args->sem)) = *(args->sem);
 
   char buffer[256];
   bzero(buffer, 256);
@@ -102,21 +107,15 @@ void* connect_client(void* client_fd_void) {
   stringstream msg;
   int count = 0;
   int n;
-  n = read(client_fd, buffer, 255);
+  n = read(args->client_fd, buffer, 255);
   if (n < 0)
     error("ERROR reading from socket");
-#if DEBUG == 1
-  printf("Msg: %s\n\n----------------------\n",buffer);
-#endif
   // checking for broken query
   string str_buf = string(buffer);
   if(str_buf.find("END") == -1)
   {
-    write(client_fd, "NULL\n", 5);
-#if DEBUG == 1
-    cout << "NULL" << endl;
-#endif
-    close(client_fd);
+    write(args->client_fd, "NULL\n", 5);
+    close(args->client_fd);
     return 0;
   }
 
@@ -126,9 +125,6 @@ void* connect_client(void* client_fd_void) {
     msg << string(buffer);
     string command;
     msg >> command;
-#if DEBUG == 1
-    cout << command << endl;
-#endif
 
     string key,val;
 
@@ -137,71 +133,56 @@ void* connect_client(void* client_fd_void) {
     if(command == "READ") {
       msg >> key;
 
-      sem.read_lock();
+      (*(args->sem)).read_lock();
 
-      if(kv_store.find(key) != kv_store.end())
+      if((*(args->kv_store)).find(key) != (*(args->kv_store)).end())
       {
-#if DEBUG == 1
-        cout << key << ":" << kv_store[key] << endl;
-#endif
-        write(client_fd, (kv_store[key]+"\n").c_str(), kv_store[key].size()+1);
+        write(args->client_fd, ((*(args->kv_store))[key]+"\n").c_str(), (*(args->kv_store))[key].size()+1);
       }
       else
       {
-#if DEBUG == 1
-        cout << key << " NOT FOUND" << endl;
-#endif
-        write(client_fd, "NULL\n", 5);
+        write(args->client_fd, "NULL\n", 5);
       }
-      sem.read_unlock();
+      (*(args->sem)).read_unlock();
     }
     else if(command == "WRITE") {
       msg >> key;
       msg >> val;
       val = val.substr(1, val.size()-1);
 
-      sem.write_lock();
+      (*(args->sem)).write_lock();
 
-      kv_store[key] = val;
-#if DEBUG == 1
-      cout << key << " -> " << val << endl;
-#endif
-      write(client_fd, "FIN\n", 4);
+      (*(args->kv_store))[key] = val;
+      write(args->client_fd, "FIN\n", 4);
 
-      sem.write_unlock();
+      (*(args->sem)).write_unlock();
 
     }
     else if(command == "DELETE")
     {
       msg >> key;
 
-      sem.write_lock();
+      (*(args->sem)).write_lock();
 
-      if(kv_store.find(key) != kv_store.end())
+      if((*(args->kv_store)).find(key) != (*(args->kv_store)).end())
       {
-        kv_store.erase(key);
+        (*(args->kv_store)).erase(key);
         cout << key << " deleted" << endl;
       }
       else
-#if DEBUG == 1
-        cout << "NOT FOUND" << endl;
-#endif
-      write(client_fd, "NULL\n", 5);
+      write(args->client_fd, "NULL\n", 5);
 
-      sem.write_unlock();
+      (*(args->sem)).write_unlock();
 
     }
     else if (command == "COUNT")
     {
 
-      sem.read_lock();
+      (*(args->sem)).read_lock();
 
-      string count = to_string(kv_store.size())+"\n";
-      write(client_fd,count.c_str(), sizeof(count));
-#if DEBUG == 1
-      cout << kv_store.size() << endl;
-#endif
-      sem.read_unlock();
+      string count = to_string((*(args->kv_store)).size())+"\n";
+      write(args->client_fd,count.c_str(), sizeof(count));
+      (*(args->sem)).read_unlock();
     }
     else if(command == "END")
     {
@@ -210,21 +191,16 @@ void* connect_client(void* client_fd_void) {
     }
     else
     {
-#if DEBUG == 1
-      cout << "INVAILD COMMAND" << endl;
-#endif
     }
 
   } while(true);
 
 
-  close(client_fd);
+  close(args->client_fd);
   pthread_exit(NULL);
 
 
 }
-
-
 
 int main(int argc, char ** argv) {
   int portno; /* port to listen on */
@@ -261,11 +237,8 @@ int main(int argc, char ** argv) {
     error("error on binding");
 
   vector<pthread_t> client_threads;
-  do{
+  while(true){
     //listen for incoming tcp connections
-#if DEBUG == 1
-    printf("\tlistening on %s:%d\n", inet_ntoa(serv_addr.sin_addr), ntohs(serv_addr.sin_port));
-#endif
     int list_err = listen(sockfd, 100);
     if (list_err < 0)
       error("error on listen");
@@ -283,15 +256,8 @@ int main(int argc, char ** argv) {
       if (pthread_err)
       error("ERROR on pthread_create");
     client_threads.push_back(client_tid);
-#if DEBUG == 1
-    printf("Connected to %s:%d\n", inet_ntoa(remote_host.sin_addr), ntohs(remote_host.sin_port));
-    for(auto tid : client_threads)
-      printf("\t%d\n", tid);
-#endif
-
 
   }
-  while(true);
 
   for(auto tid : client_threads)
     pthread_join(tid, NULL);
@@ -299,3 +265,4 @@ int main(int argc, char ** argv) {
 
 
 }
+
