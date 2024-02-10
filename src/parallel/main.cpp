@@ -25,9 +25,13 @@
 #include <queue>
 #include <thread>
 
-#define DEBUG 1
+#define DEBUG 0
+#define NUM_THREADS 128
 using namespace std;
 
+struct thread_args;
+void error(const char* msg);
+int connect_client(thread_args* args);
 
 
 class Semaphore {
@@ -66,7 +70,6 @@ public:
 
 };
 
-
 struct thread_args {
   int client_fd;
   unordered_map<string, string> *kv_store;
@@ -82,27 +85,68 @@ struct thread_args {
 
 };
 
+class ThreadPool {
+  queue<thread_args> tasks;
+  vector<pthread_t> threads;
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  const int THREADS;
 
-void error(const char* msg)
-{
+  public:
+  ThreadPool(int num_threads) : THREADS(num_threads) {
+    pthread_mutex_init(&mutex, NULL);
+    pthread_cond_init(&cond, NULL);
+    for (int i = 0; i < THREADS; i++) {
+      pthread_t tid;
+      pthread_create(&tid, NULL, worker, this);
+      threads.push_back(tid);
+    }
+  }
+
+  void add_task(thread_args task) {
+    pthread_mutex_lock(&mutex);
+    tasks.push(task);
+    pthread_cond_signal(&cond);
+    pthread_mutex_unlock(&mutex);
+  }
+
+  static void* worker(void* arg) {
+    ThreadPool* pool = (ThreadPool*)arg;
+    while (true) {
+      pthread_mutex_lock(&pool->mutex);
+      while (pool->tasks.empty()) {
+        pthread_cond_wait(&pool->cond, &pool->mutex);
+      }
+      thread_args task = pool->tasks.front();
+      pool->tasks.pop();
+      pthread_mutex_unlock(&pool->mutex);
+      connect_client(&task);
+    }
+  }
+
+  ~ThreadPool() {
+    for (int i = 0; i < THREADS; i++) {
+      pthread_join(threads[i], NULL);
+    }
+  }
+
+
+
+};
+
+void error(const char* msg) {
   perror(msg);
   exit(1);
 }
 
-
-void* connect_client(void* client_fd_void) {
-  thread_args *args = (thread_args*)client_fd_void;
-  int client_fd = args->client_fd;
-  unordered_map<string, string> kv_store = *(args->kv_store);
-  Semaphore sem = *(args->sem);
+int connect_client(thread_args* args) {
 
   char buffer[256];
   bzero(buffer, 256);
   bool end;
-  stringstream msg;
   int count = 0;
   int n;
-  n = read(client_fd, buffer, 255);
+  n = read(args->client_fd, buffer, 255);
   if (n < 0)
     error("ERROR reading from socket");
 #if DEBUG == 1
@@ -112,18 +156,19 @@ void* connect_client(void* client_fd_void) {
   string str_buf = string(buffer);
   if(str_buf.find("END") == -1)
   {
-    write(client_fd, "NULL\n", 5);
+    write(args->client_fd, "NULL\n", 5);
 #if DEBUG == 1
     cout << "NULL" << endl;
 #endif
-    close(client_fd);
-    return 0;
+    close(args->client_fd);
+    return 1;
   }
 
+  stringstream msg;
+  msg << string(buffer);
   do {
 
 
-    msg << string(buffer);
     string command;
     msg >> command;
 #if DEBUG == 1
@@ -137,71 +182,71 @@ void* connect_client(void* client_fd_void) {
     if(command == "READ") {
       msg >> key;
 
-      sem.read_lock();
+      args->sem->read_lock();
 
-      if(kv_store.find(key) != kv_store.end())
+      if(args->kv_store->find(key) != args->kv_store->end())
       {
 #if DEBUG == 1
-        cout << key << ":" << kv_store[key] << endl;
+        cout << key << ":" << (*(args->kv_store))[key] << endl;
 #endif
-        write(client_fd, (kv_store[key]+"\n").c_str(), kv_store[key].size()+1);
+        write(args->client_fd, ((*(args->kv_store))[key]+"\n").c_str(), (*(args->kv_store))[key].size()+1);
       }
       else
       {
 #if DEBUG == 1
         cout << key << " NOT FOUND" << endl;
 #endif
-        write(client_fd, "NULL\n", 5);
+        write(args->client_fd, "NULL\n", 5);
       }
-      sem.read_unlock();
+      args->sem->read_unlock();
     }
     else if(command == "WRITE") {
       msg >> key;
       msg >> val;
       val = val.substr(1, val.size()-1);
 
-      sem.write_lock();
+      args->sem->write_lock();
 
-      kv_store[key] = val;
+      (*(args->kv_store))[key] = val;
 #if DEBUG == 1
       cout << key << " -> " << val << endl;
 #endif
-      write(client_fd, "FIN\n", 4);
+      write(args->client_fd, "FIN\n", 4);
 
-      sem.write_unlock();
+      args->sem->write_unlock();
 
     }
     else if(command == "DELETE")
     {
       msg >> key;
 
-      sem.write_lock();
+      args->sem->write_lock();
 
-      if(kv_store.find(key) != kv_store.end())
+      if(args->kv_store->find(key) != args->kv_store->end())
       {
-        kv_store.erase(key);
+        args->kv_store->erase(key);
         cout << key << " deleted" << endl;
       }
       else
 #if DEBUG == 1
         cout << "NOT FOUND" << endl;
 #endif
-      write(client_fd, "NULL\n", 5);
+      write(args->client_fd, "NULL\n", 5);
 
-      sem.write_unlock();
+      args->sem->write_unlock();
 
     }
     else if (command == "COUNT")
     {
 
-      sem.read_lock();
+      args->sem->read_lock();
 
-      string count = to_string(kv_store.size())+"\n";
-      write(client_fd,count.c_str(), sizeof(count));
+      string count = to_string(args->kv_store->size())+"\n";
+      write(args->client_fd,count.c_str(), sizeof(count));
 #if DEBUG == 1
-      cout << kv_store.size() << endl;
+      cout << args->kv_store->size() << endl;
 #endif
-      sem.read_unlock();
+      args->sem->read_unlock();
     }
     else if(command == "END")
     {
@@ -218,11 +263,12 @@ void* connect_client(void* client_fd_void) {
   } while(true);
 
 
-  close(client_fd);
-  pthread_exit(NULL);
+  close(args->client_fd);
+  return 0;
 
 
 }
+
 
 
 
@@ -231,6 +277,7 @@ int main(int argc, char ** argv) {
 
   unordered_map<string, string> kv_store;
   Semaphore sem;
+  ThreadPool pool(NUM_THREADS);
 
   /*
    * check command line arguments
@@ -242,6 +289,7 @@ int main(int argc, char ** argv) {
 
   // DONE: Server port number taken as command line argument
   portno = atoi(argv[1]);
+
   struct sockaddr_in serv_addr, remote_host;
   bzero((char *) &serv_addr, sizeof(serv_addr));
   socklen_t addr_len = sizeof(remote_host);
@@ -263,12 +311,13 @@ int main(int argc, char ** argv) {
   vector<pthread_t> client_threads;
   do{
     //listen for incoming tcp connections
-#if DEBUG == 1
-    printf("\tlistening on %s:%d\n", inet_ntoa(serv_addr.sin_addr), ntohs(serv_addr.sin_port));
-#endif
     int list_err = listen(sockfd, 100);
     if (list_err < 0)
       error("error on listen");
+
+#if DEBUG == 1
+    printf("\tlistening on %s:%d\n", inet_ntoa(serv_addr.sin_addr), ntohs(serv_addr.sin_port));
+#endif
 
 
     int client_fd = accept(sockfd, (struct sockaddr *) &remote_host, &addr_len);
@@ -277,24 +326,15 @@ int main(int argc, char ** argv) {
 
     pthread_t client_tid;
 
-    thread_args *args = new thread_args(client_fd , &kv_store, &sem);
+    thread_args args = thread_args(client_fd , &kv_store, &sem);
+    pool.add_task(args);
 
-    int pthread_err = pthread_create(&client_tid, NULL, connect_client, (void*)args);
-      if (pthread_err)
-      error("ERROR on pthread_create");
-    client_threads.push_back(client_tid);
-#if DEBUG == 1
-    printf("Connected to %s:%d\n", inet_ntoa(remote_host.sin_addr), ntohs(remote_host.sin_port));
-    for(auto tid : client_threads)
-      printf("\t%d\n", tid);
-#endif
+
 
 
   }
   while(true);
 
-  for(auto tid : client_threads)
-    pthread_join(tid, NULL);
   close(sockfd);
 
 
