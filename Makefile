@@ -7,7 +7,7 @@ test_serial: serial
 	killall serial_server
 
 serial: src/serial/main.cpp
-	g++ -std=c++11 -o bin/serial_server src/serial/main.cpp 
+	g++ -std=c++11 -o bin/serial_server src/serial/main.cpp
 
 test_parallel: parallel
 	./bin/parallel_server 8080 > /dev/null &

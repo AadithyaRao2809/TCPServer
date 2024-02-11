@@ -25,7 +25,7 @@
 #include <queue>
 #include <thread>
 
-#define DEBUG 0
+#define DEBUG 1
 #define NUM_THREADS 128
 using namespace std;
 
@@ -150,7 +150,7 @@ int connect_client(thread_args* args) {
   if (n < 0)
     error("ERROR reading from socket");
 #if DEBUG == 1
-  printf("Msg: %s\n\n----------------------\n",buffer);
+  // printf("Msg: %s\n\n----------------------\n",buffer);
 #endif
   // checking for broken query
   string str_buf = string(buffer);
@@ -225,6 +225,7 @@ int connect_client(thread_args* args) {
       if(args->kv_store->find(key) != args->kv_store->end())
       {
         args->kv_store->erase(key);
+        write(args->client_fd, "FIN\n", 4);
         cout << key << " deleted" << endl;
       }
       else
@@ -250,7 +251,7 @@ int connect_client(thread_args* args) {
     }
     else if(command == "END")
     {
-      end = true;   //break
+      // end = true;   //break
       break;
     }
     else
