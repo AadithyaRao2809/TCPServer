@@ -25,7 +25,7 @@
 #include <queue>
 #include <thread>
 
-#define DEBUG 0
+#define DEBUG 1
 #define NUM_THREADS 128
 using namespace std;
 
